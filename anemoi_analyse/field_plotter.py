@@ -1,9 +1,12 @@
 import cartopy.crs as ccrs
+import datetime
 import numpy as np
 import pandas as pd
+import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import trange
 import xarray as xr
+import anemoi.datasets
 
 from data import get_data, get_era5_data, read_era5
 from utils import mesh, panel_config_auto, interpolate, plot
@@ -12,7 +15,14 @@ from map_keys import map_keys
 plt.rcParams["font.family"] = "serif"
 
 
-def panel_daemon(num_models, num_lead_times, ens_size, plot_ens_mean, include_ref, swap_axes=False):
+def panel_daemon(
+        num_models: int, 
+        num_lead_times: int, 
+        ens_size: int, 
+        plot_ens_mean: bool, 
+        include_ref: bool, 
+        swap_axes: bool = False,
+    ) -> (tuple[int], tuple[int], tuple[int], tuple[int], tuple[int]):
     """Panel daemon that controls panel configuration.
     Striving for a square-horizontal layout, but a square-vertical
     layout can be invokes by setting swap_axes=True.
@@ -138,7 +148,21 @@ def panel_daemon(num_models, num_lead_times, ens_size, plot_ens_mean, include_re
     return tuple(panel_shape), tuple(var_idx_xy), tuple(var_len_xy), tuple(ens_mean), tuple(ref)
 
 
-def _plot_panel(ax, data, lat_grid, lon_grid, data_contour=None, lat=None, lon=None, xlim=None, ylim=None, titlex="", titley="", resolution=None, **kwargs):
+def _plot_panel(
+        ax: matplotlib.axes.Axes,
+        data: np.array, 
+        lat_grid: np.ndarray,
+        lon_grid: np.ndarray,
+        data_contour: np.ndarray = None,
+        lat: np.ndarray = None,
+        lon: np.ndarray = None,
+        xlim: tuple[float] = None,
+        ylim: tuple[float] = None,
+        titlex: str = None,
+        titley: str = None,
+        resolution: float = None,
+        **kwargs
+    ) -> matplotlib.collections.QuadMesh:
     """Plot a single panel. Interpolate if necessary."""
     if data.ndim == 1:
         data = interpolate(data, lat, lon, resolution)
@@ -149,13 +173,22 @@ def _plot_panel(ax, data, lat_grid, lon_grid, data_contour=None, lat=None, lon=N
 
     im = plot(ax, data, lon_grid, lat_grid, contour=data_contour, **kwargs)
     ax.set_title(titlex)
-    ax.set_ylabel(titley)
+    ax.annotate(titley, (-0.2, 0.5), xycoords='axes fraction', rotation=90, va='center', fontsize=12)
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
     return im
 
 
-def _process_fig(fig, axs, im, field, time, units, path_out, show):
+def _process_fig(
+        fig: matplotlib.figure,
+        axs: np.ndarray[matplotlib.axes.Axes],
+        im: matplotlib.collections.QuadMesh,
+        field: str,
+        time: datetime.datetime,
+        units: str, 
+        path_out: str = None,
+        show: bool = True,
+    ) -> matplotlib.figure:
     """Add super title to figure, colorbar, potentially save and show figure.
 
     Return fig such that it can be used outside class
@@ -238,7 +271,11 @@ class FieldPlotter:
 
         self.path_features = self._get_path_features(resolution, rad)
 
-    def _get_path_features(self, resolution, rad):
+    def _get_path_features(
+            self, 
+            resolution: float,
+            rad: bool = False,
+        ) -> dict:
         """extract path-specific features.
         Returns a list with a dictionary for each path.
 
@@ -291,7 +328,15 @@ class FieldPlotter:
             path_features.append(features)
         return path_features
 
-    def _get_ref_features(self, file_ref, pressure_contour, ds, regular, resolution, rad):
+    def _get_ref_features(
+            self, 
+            file_ref: str,
+            pressure_contour: bool,
+            ds: xr.open_dataset,
+            regular: bool,
+            resolution: float,
+            rad: bool,
+        ) -> (anemoi.datasets.open_dataset, xr.open_dataset, np.ndarray, np.ndarray):
         """Reference features."""
         fields = [self.field]
         if pressure_contour:
@@ -329,7 +374,7 @@ class FieldPlotter:
             ref_label: str = 'ref',
             ref_units: str = 'deg',
             **kwargs,
-        ) -> None:
+        ) -> (matplotlib.figure, np.ndarray[matplotlib.axes.Axes]):
         """
         Args:
             field: str
@@ -446,7 +491,7 @@ class FieldPlotter:
                     if (i_em is None or i==i_em) and (j_em is None or j==j_em):
                         data = ds[field][:, lt_idx].mean(axis=0)
                         data_pressure = ds['air_pressure_at_sea_level'][:, lt_idx].mean(axis=0) if pressure_contour else None
-                        label_x = "ensemble mean" if i==0 else ''
+                        label_x = "ensemble mean" if i==0 else None
                         im = _plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
                         continue
                     
@@ -455,16 +500,16 @@ class FieldPlotter:
                     if (i_ref is None or i==i_ref) and (j_ref is None or j==j_ref):
                         data = data_ref[field][lt_idx]
                         data_pressure = data_ref['air_pressure_at_sea_level'][lt_idx] if pressure_contour else None
-                        label_x = ref_label if i == 0 else ''
-                        label_y = labels[var_idx_xy[0]](i) if j == 0 else ""
+                        label_x = ref_label if i == 0 else None
+                        label_y = ref_label if j == 0 else None
                         im = _plot_panel(axs[i,j], data, lat_grid_ref, lon_grid_ref, data_pressure, ds_ref.latitudes, ds_ref.longitudes, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
                         continue
                 if len(var_idx_xy) == 1:
                     label_x = labels[var_idx_xy[0]](k)
-                    label_y = ""
+                    label_y = None
                 else:
-                    label_x = labels[var_idx_xy[1]](j) if i == 0 else ""
-                    label_y = labels[var_idx_xy[0]](i) if j == 0 else ""
+                    label_x = labels[var_idx_xy[1]](j) if i == 0 else None
+                    label_y = labels[var_idx_xy[0]](i) if j == 0 else None
                 features = self.path_features[model_idx]
                 ds = features['ds']
                 resolution = features['resolution']
@@ -497,7 +542,7 @@ if __name__ == "__main__":
             #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_kl_w1/inference/epoch_076/predictions/", 
             #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_safcrps_k5_s1/inference/epoch_076/predictions/", 
             #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_b_s0.1_mp/inference/epoch_030/predictions/",
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_d_roll2_lr5e-7/inference/epoch_009/predictions/",
+            "/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_d_roll2_lr5e-7/inference/epoch_009/predictions/",
             "/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_d_roll2_lr1e-6/inference/epoch_009/predictions/",
         ],
         #model_labels = ['CRPS+KL\n'+r'$\lambda=10^{-4}$', 'CRPS+KL\n'+r'$\lambda=10^{-2}$', 'CRPS+KL\n'+r'$\lambda=1$'],
@@ -511,11 +556,11 @@ if __name__ == "__main__":
 
     fp.plot(
         field='precipitation_amount_acc6h', 
-        lead_times=[0,4,8,12,16], #,16,20,24,28,32,36,40], 
+        lead_times=[0,4,8,12], #,16,20,24,28,32,36,40], 
         #pressure_contour=True,
         cmap=cmap, 
         norm=True,
-        #file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr", 
+        file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr", 
         #file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr", 
         #xlim=(-4e5,0),
         #ylim=(-6e5,0),
