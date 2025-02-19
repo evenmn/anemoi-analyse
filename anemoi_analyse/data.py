@@ -41,13 +41,18 @@ def get_data(path, time, ens_size, file_prefix=''):
             Dict in the form of
             data_dict[field][member,lead_time,coords]
     """
-    time = time.strftime('%Y-%m-%dT%H')
-    if ens_size is None:
+    if path.endswith('.nc'):
+        # assuming just a single NetCDF file, cannot be ensembles
+        ds = xr.open_dataset(path)
+        ds = ds.expand_dims('members').assign_coords(members=[1])
+    elif ens_size is None:
+        time = time.strftime('%Y-%m-%dT%H')
         filename = glob(path + f"*{time}.nc")[0]
         ds = xr.open_dataset(filename)
         ds = ds.expand_dims('members').assign_coords(members=[1])
     else:
         # load datasets
+        time = time.strftime('%Y-%m-%dT%H')
         datasets = []
         for i in range(ens_size):
             try:
@@ -62,11 +67,11 @@ def get_data(path, time, ens_size, file_prefix=''):
         ds = xr.concat(datasets_with_members, dim='members')
 
     if 'air_temperature_2m' in ds.variables:
-        ds['air_temperature_2m'] -= 273.15
+        ds['air_temperature_2m'] = ds['air_temperature_2m'] - 273.15
     if 'precipitation_amount_acc6h' in ds.variables:
-        ds['precipitation_amount_acc6h'] *= 1000
+        ds['precipitation_amount_acc6h'] = 1000 * ds['precipitation_amount_acc6h'] 
     if 'air_pressure_at_sea_level' in ds.variables:
-        ds['air_pressure_at_sea_level'] /= 100
+        ds['air_pressure_at_sea_level'] = ds['air_pressure_at_sea_level'] / 100
     return ds
 
 def read_verif(filename):

@@ -1,5 +1,4 @@
 import cartopy.crs as ccrs
-import datetime
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -9,206 +8,17 @@ import xarray as xr
 import anemoi.datasets
 
 from data import get_data, get_era5_data, read_era5
-from utils import mesh, panel_config_auto, interpolate, plot
+from utils import mesh, interpolate, plot
 from map_keys import map_keys
 
-plt.rcParams["font.family"] = "serif"
 
-
-def panel_daemon(
-        num_models: int, 
-        num_lead_times: int, 
-        ens_size: int, 
-        plot_ens_mean: bool, 
-        include_ref: bool, 
-        swap_axes: bool = False,
-    ) -> (tuple[int], tuple[int], tuple[int], tuple[int], tuple[int]):
-    """Panel daemon that controls panel configuration.
-    Striving for a square-horizontal layout, but a square-vertical
-    layout can be invokes by setting swap_axes=True.
-
-    Policy:
-    - Can only plot two dimensions at the same time, meaning that
-      either num_models, num_lead_times or num_members + plot_ens_mean
-      has to be one.
-    - If two of them are one, the dimensions is rearranged into 2d
-      as close to square as possible, with a horizontal preference.
-      Note that panels can be left empty if perfect rearrangement
-      if not possible (e.g. in case of a prime number of panels)
-    - If two dimensions, the shortest dimension will always be in
-      vertical direction (usually in order model - lead time - ens).
-    - Reference will never be appended to lead times direction,
-      and then appended to the longest dimension of model and ens
-
-    Args:
-    - num_models: int
-        number of models/paths
-    - num_lead_times: int
-        number of lead times to plot
-    - num_members: int
-        number of ensemble members to include
-    - plot_ens_mean: bool
-        plot ens mean true/false
-    - include ref: bool
-        include reference true/false
-    - swap_axes: bool
-        swap x- and y axis, making plot vertical
-
-    Returns:
-    - panel_shape: tuple[int]
-        number of panels in x (horizontal) and y (vertical) directions
-    - var_idx_xy: tuple[int]
-        variable indices in x- and y-directions, 1d if only one variable
-        0: model, 1: lead time, 2: ens
-    - var_len_xy: tuple[int]
-        variable lengths in x- and y-directions, 1d if only one variable
-        in practice only used when only one variable and empty panel
-    - ens_mean: tuple(int)
-        Indicates which dimension or dimensions to put ens_mean
-        (all ens_mean, x, y)
-    - ref_dim: tuple(int)
-        dimension to append reference along, (x, y)
-    """
-    if ens_size is None:
-        # num_members can not be set (None) for two reasons:
-        # 1. deterministic forecast, set num_members to 1
-        # 2. plotting ensemble mean only, set num_members to 0
-        if plot_ens_mean:
-            ens_size = 0
-        else:
-            ens_size = 1
-
-    # always append ens mean panel in ensemble dim
-    num_members = ens_size + plot_ens_mean
-
-    # assert correct dimensionalities
-    var_len = np.array([num_models, num_lead_times, num_members])
-    assert not 0 in var_len, "Cannot deal with zero dimension"
-    assert 1 in var_len, "At least one dimension needs length 1"
-
-    # check dimensionality
-    active_var = var_len > 1  # which dimension has more than 1 element?
-    num_vars = active_var.sum()  # number of dimensions longer than 1
-    var_idx = np.argsort(var_len) # putting longest dimension last
-
-    var_idx_xy = var_idx[-2:]  # dimension indices longer than 1 element
-    var_len_xy = var_len[var_idx_xy]  # number of panels in each direction
-    panel_shape = var_len_xy
-
-    # ensemble mean position [only ens mean, x, y]
-    ens_mean = [None, None, None]
-    if plot_ens_mean:
-        if var_idx_xy[0] == 2:
-            ens_mean[1] = num_members-1
-        elif var_idx_xy[1] == 2:
-            ens_mean[2] = num_members-1
-        else:
-            ens_mean[0] = 0
-
-    # reference position [x, y]
-    ref = [None, None]
-    if include_ref:
-        # add ref along longest dim, but not lead times
-        #ref_dim =  int(dim_len[1] > 1)  
-        if var_idx_xy[0] != 1:
-            ref_dim = 0
-        else:
-            ref_dim = 1
-        ref[ref_dim] = panel_shape[ref_dim]
-        panel_shape[ref_dim] += 1
-
-    # rearrange to 2d if 1d
-    if min(panel_shape) < 2:
-        conf_map = [None,
-                    (1,1), (1,2), (2,2), (2,2),
-                    (2,3), (2,3), (2,4), (2,4),
-                    (3,3), (3,4), (3,4), (3,4),
-                    (4,4), (4,4), (4,4), (4,4),
-                   ]
-        panel_limit = len(conf_map) - 1
-
-        if panel_shape[1] > panel_limit:
-            raise ValueError(f"Panel limit reached!")
-        
-        if plot_ens_mean:
-            ens_mean = conf_map[ens_mean[-1]]  # this is not correct, swap only the last two dims
-        if include_ref:
-            ref = conf_map[ref[-1]]
-        var_idx_xy = var_idx_xy[1:]
-        var_len_xy = panel_shape[1:]
-        panel_shape = conf_map[panel_shape[-1]]
-
-    if swap_axes:
-        var_idx_xy = reversed(var_idx_xy)
-        var_len_xy = reversed(var_len_xy)
-        panel_shape = reversed(panel_shape)
-        ref = reversed(ref)
-        ens_mean = reversed(ens_mean) # this is not correct, swap only the last two dims
-    
-    return tuple(panel_shape), tuple(var_idx_xy), tuple(var_len_xy), tuple(ens_mean), tuple(ref)
-
-
-def _plot_panel(
-        ax: matplotlib.axes.Axes,
-        data: np.array, 
-        lat_grid: np.ndarray,
-        lon_grid: np.ndarray,
-        data_contour: np.ndarray = None,
-        lat: np.ndarray = None,
-        lon: np.ndarray = None,
-        xlim: tuple[float] = None,
-        ylim: tuple[float] = None,
-        titlex: str = None,
-        titley: str = None,
-        resolution: float = None,
-        **kwargs
-    ) -> matplotlib.collections.QuadMesh:
-    """Plot a single panel. Interpolate if necessary."""
-    if data.ndim == 1:
-        data = interpolate(data, lat, lon, resolution)
-
-    if data_contour is not None:
-        if data_contour.ndim == 1:
-            data_contour = interpolate(data_contour, lat, lon, resolution)
-
-    im = plot(ax, data, lon_grid, lat_grid, contour=data_contour, **kwargs)
-    ax.set_title(titlex)
-    ax.annotate(titley, (-0.2, 0.5), xycoords='axes fraction', rotation=90, va='center', fontsize=12)
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    return im
-
-
-def _process_fig(
-        fig: matplotlib.figure,
-        axs: np.ndarray[matplotlib.axes.Axes],
-        im: matplotlib.collections.QuadMesh,
-        field: str,
-        time: datetime.datetime,
-        units: str, 
-        path_out: str = None,
-        show: bool = True,
-    ) -> matplotlib.figure:
-    """Add super title to figure, colorbar, potentially save and show figure.
-
-    Return fig such that it can be used outside class
-    """
-    fig.suptitle(time.strftime('%Y-%m-%dT%H'))
-    plt.tight_layout()
-    cbax = fig.colorbar(im, ax=axs.ravel().tolist())
-    cbax.set_label(f"{field} ({units})")
-    if path_out is not None:
-        plt.savefig(path_out)
-    if show:
-        plt.show()
-    return fig
 
 class FieldPlotter:
     """Plot ensemble field and potentially compare to ERA5."""
     def __init__(
             self,
-            time: str or pd.Timestamp,
             path: str or list[str],
+            time: str or pd.Timestamp = None,
             members: int or list[int] = None,
             resolution: float = None,
             freq: str = '6h',
@@ -220,12 +30,11 @@ class FieldPlotter:
         ) -> None:
         """
         Args:
-            time: str or pd.Timestamp
-                Specify a time stamps to be plotted
             path: str or list[str]
                 Path to directory where files to be analysed are found.
                 If several paths are provided, comparison mode is invoked
-                (maybe add information about NetCDF format and folder structure?)
+            time: str or pd.Timestamp
+                Specify a time stamps to be plotted. Not necessary if only one NetCDF file.
             ens_size: int
                 Number of ensemble members to include, leave as None for deterministic models.
                 (switch to member list to be able to choose members, in case some are corrupt)
@@ -270,6 +79,7 @@ class FieldPlotter:
             raise NotImplementedError(f"Unknown latlon_units '{latlon_units}'!")
 
         self.path_features = self._get_path_features(resolution, rad)
+
 
     def _get_path_features(
             self, 
@@ -328,6 +138,7 @@ class FieldPlotter:
             path_features.append(features)
         return path_features
 
+
     def _get_ref_features(
             self, 
             file_ref: str,
@@ -357,6 +168,203 @@ class FieldPlotter:
             lat_grid_ref = np.rad2deg(lat_grid_ref)
             lon_grid_ref = np.rad2deg(lon_grid_ref)
         return data_ref, ds_ref, lat_grid_ref, lon_grid_ref
+
+
+    @staticmethod
+    def panel_daemon(
+            num_models: int, 
+            num_lead_times: int, 
+            ens_size: int, 
+            plot_ens_mean: bool, 
+            include_ref: bool, 
+            swap_axes: bool = False,
+        ) -> (tuple[int], tuple[int], tuple[int], tuple[int], tuple[int]):
+        """Panel daemon that controls panel configuration.
+        Striving for a square-horizontal layout, but a square-vertical
+        layout can be invokes by setting swap_axes=True.
+
+        Policy:
+        - Can only plot two dimensions at the same time, meaning that
+          either num_models, num_lead_times or num_members + plot_ens_mean
+          has to be one.
+        - If two of them are one, the dimensions is rearranged into 2d
+          as close to square as possible, with a horizontal preference.
+          Note that panels can be left empty if perfect rearrangement
+          if not possible (e.g. in case of a prime number of panels)
+        - If two dimensions, the shortest dimension will always be in
+          vertical direction (usually in order model - lead time - ens).
+        - Reference will never be appended to lead times direction,
+          and then appended to the longest dimension of model and ens
+
+        Args:
+        - num_models: int
+            number of models/paths
+        - num_lead_times: int
+            number of lead times to plot
+        - num_members: int
+            number of ensemble members to include
+        - plot_ens_mean: bool
+            plot ens mean true/false
+        - include ref: bool
+            include reference true/false
+        - swap_axes: bool
+            swap x- and y axis, making plot vertical
+
+        Returns:
+        - panel_shape: tuple[int]
+            number of panels in x (horizontal) and y (vertical) directions
+        - var_idx_xy: tuple[int]
+            variable indices in x- and y-directions, 1d if only one variable
+            0: model, 1: lead time, 2: ens
+        - var_len_xy: tuple[int]
+            variable lengths in x- and y-directions, 1d if only one variable
+            in practice only used when only one variable and empty panel
+        - ens_mean: tuple(int)
+            Indicates which dimension or dimensions to put ens_mean
+            (all ens_mean, x, y)
+        - ref_dim: tuple(int)
+            dimension to append reference along, (x, y)
+        """
+        if ens_size is None:
+            # num_members can not be set (None) for two reasons:
+            # 1. deterministic forecast, set num_members to 1
+            # 2. plotting ensemble mean only, set num_members to 0
+            if plot_ens_mean:
+                ens_size = 0
+            else:
+                ens_size = 1
+
+        # always append ens mean panel in ensemble dim
+        num_members = ens_size + plot_ens_mean
+
+        # assert correct dimensionalities
+        var_len = np.array([num_models, num_lead_times, num_members])
+        assert not 0 in var_len, "Cannot deal with zero dimension"
+        assert 1 in var_len, "At least one dimension needs length 1"
+
+        # check dimensionality
+        active_var = var_len > 1  # which dimension has more than 1 element?
+        num_vars = active_var.sum()  # number of dimensions longer than 1
+        var_idx = np.argsort(var_len) # putting longest dimension last
+
+        if var_len.sum() == 3:
+            # if only one panel, we want it to be labeled by model
+            var_idx_xy = var_idx[::-1]
+        else:
+            var_idx_xy = var_idx[-2:]  # dimension indices longer than 1 element
+        var_len_xy = var_len[var_idx_xy]  # number of panels in each direction
+        panel_shape = var_len_xy
+
+        # ensemble mean position [only ens mean, x, y]
+        ens_mean = [None, None, None]
+        if plot_ens_mean:
+            if var_idx_xy[0] == 2:
+                ens_mean[1] = num_members-1
+            elif var_idx_xy[1] == 2:
+                ens_mean[2] = num_members-1
+            else:
+                ens_mean[0] = 0
+
+        # reference position [x, y]
+        ref = [None, None]
+        if include_ref:
+            # add ref along longest dim, but not lead times
+            if var_idx_xy[1] != 1:
+                ref_dim = 0
+            else:
+                ref_dim = 1
+            ref[ref_dim] = panel_shape[ref_dim]
+            panel_shape[ref_dim] += 1
+
+        # rearrange to 2d if 1d
+        if min(panel_shape) < 2:
+            conf_map = [None,
+                        (1,1), (1,2), (1,3), (2,2),
+                        (2,3), (2,3), (2,4), (2,4),
+                        (3,3), (3,4), (3,4), (3,4),
+                        (3,5), (3,5), (3,5), (4,4),
+                       ]
+            panel_limit = len(conf_map) - 1
+
+            if panel_shape[1] > panel_limit:
+                raise ValueError(f"Panel limit reached!")
+            
+            var_idx_xy = var_idx_xy[1:]
+            var_len_xy = panel_shape[1:]
+            panel_shape = conf_map[panel_shape[-1]]
+            if plot_ens_mean:
+                ens_mean = conf_map[ens_mean[-1]]  # this is not correct, swap only the last two dims
+            if include_ref:
+                ref = (var_len_xy[0]%panel_shape[1], var_len_xy[0]//panel_shape[1])
+
+        if swap_axes:
+            var_idx_xy = reversed(var_idx_xy)
+            var_len_xy = reversed(var_len_xy)
+            panel_shape = reversed(panel_shape)
+            ref = reversed(ref)
+            ens_mean = reversed(ens_mean) # this is not correct, swap only the last two dims
+        
+        return tuple(panel_shape), tuple(var_idx_xy), tuple(var_len_xy), tuple(ens_mean), tuple(ref)
+
+
+    @staticmethod
+    def _plot_panel(
+            ax: matplotlib.axes.Axes,
+            data: np.array, 
+            lat_grid: np.ndarray,
+            lon_grid: np.ndarray,
+            data_contour: np.ndarray = None,
+            lat: np.ndarray = None,
+            lon: np.ndarray = None,
+            xlim: tuple[float] = None,
+            ylim: tuple[float] = None,
+            titlex: str = None,
+            titley: str = None,
+            resolution: float = None,
+            **kwargs
+        ) -> matplotlib.collections.QuadMesh:
+        """Plot a single panel. Interpolate if necessary."""
+        if data.ndim == 1:
+            data = interpolate(data, lat, lon, resolution)
+
+        if data_contour is not None:
+            if data_contour.ndim == 1:
+                data_contour = interpolate(data_contour, lat, lon, resolution)
+
+        im = plot(ax, data, lon_grid, lat_grid, contour=data_contour, **kwargs)
+        ax.set_title(titlex)
+        ax.annotate(titley, (-0.2, 0.5), xycoords='axes fraction', rotation=90, va='center', fontsize=12)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        return im
+
+
+    @staticmethod
+    def _process_fig(
+            fig: matplotlib.figure,
+            axs: np.ndarray[matplotlib.axes.Axes],
+            im: matplotlib.collections.QuadMesh,
+            field: str,
+            time: pd.Timestamp,
+            units: str, 
+            path_out: str = None,
+            show: bool = True,
+        ) -> matplotlib.figure:
+        """Add super title to figure, colorbar, potentially save and show figure.
+
+        Return fig such that it can be used outside class
+        """
+        title = "" if time is None else time.strftime('%Y-%m-%dT%H')
+        fig.suptitle(title)
+        plt.tight_layout()
+        cbax = fig.colorbar(im, ax=axs.ravel().tolist())
+        cbax.set_label(f"{field} ({units})")
+        if path_out is not None:
+            plt.savefig(path_out)
+        if show:
+            plt.show()
+        return fig
+
 
     def plot(
             self,
@@ -402,6 +410,8 @@ class FieldPlotter:
                 Swap x- and y-axes to make plot vertical instead of horizontal
             ref_label: str
                 Reference label to be printed as panel title
+            ref_units: str
+                Angle units of reference, 'deg' (degrees) or 'rad' (radians)
         """
         lead_times = np.atleast_1d(lead_times)
         self.field = field
@@ -409,18 +419,13 @@ class FieldPlotter:
 
         units = map_keys[field]['units']
 
-        if ref_units == 'rad':
-            rad_ref = True
-        elif ref_units == 'deg':
-            rad_ref = False
-        else:
-            raise NotImplementedError(f"Unknown latlon_units '{latlon_units}'!")
-
         include_ref = False if file_ref is None else True
         if include_ref:
+            rad_ref = True if ref_units == 'rad' else False
             data_ref, ds_ref, lat_grid_ref, lon_grid_ref = self._get_ref_features(file_ref, pressure_contour, self.path_features[0]['ds'], self.path_features[0]['regular'], self.resolution, rad_ref)
 
         # find vmin and vmax and add values to kwargs
+        # bake this into a function
         vmin = +np.inf
         vmax = -np.inf
         if include_ref:
@@ -451,7 +456,7 @@ class FieldPlotter:
             projection = ccrs.LambertConformal(lon_center, lat_center, standard_parallels=(lat_center, lat_center))
         else:
             projection = ccrs.PlateCarree()
-        panel_shape, var_idx_xy, var_len_xy, ens_mean, ref_dim = panel_daemon(len(self.paths), len(self.lead_times), self.ens_size, plot_ens_mean, include_ref, swap_axes)
+        panel_shape, var_idx_xy, var_len_xy, ens_mean, ref_dim = self.panel_daemon(len(self.paths), len(self.lead_times), self.ens_size, plot_ens_mean, include_ref, swap_axes)
         fig, axs = plt.subplots(*panel_shape, figsize=(8,6), squeeze=False, subplot_kw={'projection': projection})
             
         def model_label(i):
@@ -487,12 +492,13 @@ class FieldPlotter:
                     idx[var_idx_xy[1]] = j
                 model_idx, lt_idx, ens_idx = idx
                 if plot_ens_mean:
-                    i_em, j_em = ens_mean
+                    only_em, i_em, j_em = ens_mean
                     if (i_em is None or i==i_em) and (j_em is None or j==j_em):
                         data = ds[field][:, lt_idx].mean(axis=0)
                         data_pressure = ds['air_pressure_at_sea_level'][:, lt_idx].mean(axis=0) if pressure_contour else None
                         label_x = "ensemble mean" if i==0 else None
-                        im = _plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
+                        label_y = "ensemble mean" if j==0 else None
+                        im = self._plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
                         continue
                     
                 if include_ref:
@@ -502,7 +508,7 @@ class FieldPlotter:
                         data_pressure = data_ref['air_pressure_at_sea_level'][lt_idx] if pressure_contour else None
                         label_x = ref_label if i == 0 else None
                         label_y = ref_label if j == 0 else None
-                        im = _plot_panel(axs[i,j], data, lat_grid_ref, lon_grid_ref, data_pressure, ds_ref.latitudes, ds_ref.longitudes, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
+                        im = self._plot_panel(axs[i,j], data, lat_grid_ref, lon_grid_ref, data_pressure, ds_ref.latitudes, ds_ref.longitudes, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
                         continue
                 if len(var_idx_xy) == 1:
                     label_x = labels[var_idx_xy[0]](k)
@@ -521,8 +527,8 @@ class FieldPlotter:
 
                 data = ds[field][ens_idx, lt_idx]
                 data_pressure = ds['air_pressure_at_sea_level'][ens_idx, lt_idx] if pressure_contour else None
-                im = _plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
-        fig = _process_fig(fig, axs, im, field, self.time, units, path_out, show)
+                im = self._plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
+        fig = self._process_fig(fig, axs, im, field, self.time, units, path_out, show)
         return fig, axs
 
 
@@ -547,7 +553,7 @@ if __name__ == "__main__":
         ],
         #model_labels = ['CRPS+KL\n'+r'$\lambda=10^{-4}$', 'CRPS+KL\n'+r'$\lambda=10^{-2}$', 'CRPS+KL\n'+r'$\lambda=1$'],
         #model_labels = ['CRPS', 'CRPS+CRPS(filter)'],
-        #model_labels = ['5e-7', '1e-6'],
+        model_labels = ['5e-7', '1e-6'],
         members=0,
         #file_prefix="240hfc",
         #latlon_units='rad',
@@ -557,7 +563,7 @@ if __name__ == "__main__":
     fp.plot(
         field='precipitation_amount_acc6h', 
         lead_times=[0,4,8,12], #,16,20,24,28,32,36,40], 
-        #pressure_contour=True,
+        pressure_contour=True,
         cmap=cmap, 
         norm=True,
         file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr", 
@@ -566,6 +572,7 @@ if __name__ == "__main__":
         #ylim=(-6e5,0),
         #xlim=(100,180),
         #ylim=(-11, 40),
+        plot_ens_mean=False,
         swap_axes=False,
         ref_label='MEPS',
     )
