@@ -19,11 +19,11 @@ class FieldPlotter:
             self,
             path: str or list[str],
             time: str or pd.Timestamp = None,
-            members: int or list[int] = None,
+            members: int or list[int] = 0,
             resolution: float = None,
             freq: str = '6h',
             file_prefix: str = "",
-            model_labels: list[str] = None,
+            model_label: str or list[str] = None,
             xlim: tuple[float] = None,
             ylim: tuple[float] = None,
             latlon_units: str = 'deg',
@@ -57,10 +57,10 @@ class FieldPlotter:
         self.resolution = resolution
 
         self.paths = np.atleast_1d(path)
-        self.model_labels = model_labels
-        if self.model_labels is not None:
-            self.model_labels = np.atleast_1d(self.model_labels)
-            assert len(self.model_labels) == len(self.paths), "Number of model labels must be equal to number of models" 
+        self.model_label = model_label
+        if self.model_label is not None:
+            self.model_label = np.atleast_1d(self.model_label)
+            assert len(self.model_label) == len(self.paths), "Number of model labels must be equal to number of models" 
 
         if isinstance(time, str):
             time = pd.Timestamp(time)
@@ -238,7 +238,8 @@ class FieldPlotter:
         num_members = ens_size + plot_ens_mean
 
         # assert correct dimensionalities
-        var_len = np.array([num_models, num_lead_times, num_members])
+        #var_len = np.array([num_models, num_lead_times, num_members])
+        var_len = np.array([num_members, num_lead_times, num_models])
         assert not 0 in var_len, "Cannot deal with zero dimension"
         assert 1 in var_len, "At least one dimension needs length 1"
 
@@ -249,8 +250,9 @@ class FieldPlotter:
 
         if var_len.sum() == 3:
             # if only one panel, we want it to be labeled by model
-            var_idx_xy = var_idx[::-1]
+            var_idx_xy = [1,2]  # use model and lead times #var_idx[::-1][-2:]
         else:
+
             var_idx_xy = var_idx[-2:]  # dimension indices longer than 1 element
         var_len_xy = var_len[var_idx_xy]  # number of panels in each direction
         panel_shape = var_len_xy
@@ -269,7 +271,7 @@ class FieldPlotter:
         ref = [None, None]
         if include_ref:
             # add ref along longest dim, but not lead times
-            if var_idx_xy[1] != 1:
+            if var_idx_xy[0] != 1:
                 ref_dim = 0
             else:
                 ref_dim = 1
@@ -381,6 +383,7 @@ class FieldPlotter:
             swap_axes: bool = False,
             ref_label: str = 'ref',
             ref_units: str = 'deg',
+            cmap: str = 'turbo',
             **kwargs,
         ) -> (matplotlib.figure, np.ndarray[matplotlib.axes.Axes]):
         """
@@ -417,6 +420,8 @@ class FieldPlotter:
         self.field = field
         self.lead_times = lead_times
 
+        kwargs['cmap'] = cmap
+
         units = map_keys[field]['units']
 
         include_ref = False if file_ref is None else True
@@ -425,7 +430,7 @@ class FieldPlotter:
             data_ref, ds_ref, lat_grid_ref, lon_grid_ref = self._get_ref_features(file_ref, pressure_contour, self.path_features[0]['ds'], self.path_features[0]['regular'], self.resolution, rad_ref)
 
         # find vmin and vmax and add values to kwargs
-        # bake this into a function
+        # TODO: bake this into a function
         vmin = +np.inf
         vmax = -np.inf
         if include_ref:
@@ -434,10 +439,11 @@ class FieldPlotter:
         for path_idx, features in enumerate(self.path_features):
             ds = features['ds']
             vmin = min(vmin, float(ds[field][:,lead_times].min()))
-            vmax = min(vmax, float(ds[field][:,lead_times].max()))
-            cen = (vmax-vmin)/10.
+            vmax = max(vmax, float(ds[field][:,lead_times].max()))
+            cen = (vmax-vmin)/10. # let color range cover between 10 and 90 percentils
             vmin += cen
             vmax -= cen
+
         if norm:
             boundaries = np.logspace(0.001, np.log10(vmax), cmap.N-1)
             boundaries = [0.0, 0.5, 1, 2, 4, 8, 16, 32]
@@ -460,11 +466,11 @@ class FieldPlotter:
         fig, axs = plt.subplots(*panel_shape, figsize=(8,6), squeeze=False, subplot_kw={'projection': projection})
             
         def model_label(i):
-            if self.model_labels is None:
+            if self.model_label is None:
                 return f'model {i}'
-            if i >= len(self.model_labels):
+            if i >= len(self.model_label):
                 return ""
-            return self.model_labels[i]
+            return self.model_label[i]
 
         def lt_label(i):
             lead_time = 6 * lead_times[i]
@@ -473,7 +479,7 @@ class FieldPlotter:
         def member_label(i):
             member_id = self.members[i]
             return f'member {member_id}'
-        labels = [model_label, lt_label, member_label]
+        labels = [member_label, lt_label, model_label]
 
         # mapping panel to correct data
         idx = [0,0,0] # model_idx, lt_idx, ens_idx
@@ -490,12 +496,14 @@ class FieldPlotter:
                 else:
                     idx[var_idx_xy[0]] = i
                     idx[var_idx_xy[1]] = j
-                model_idx, lt_idx, ens_idx = idx
+                ens_idx, lt_idx, model_idx = idx
+                lt = self.lead_times[lt_idx]
+                ens = self.members[ens_idx]
                 if plot_ens_mean:
                     only_em, i_em, j_em = ens_mean
                     if (i_em is None or i==i_em) and (j_em is None or j==j_em):
-                        data = ds[field][:, lt_idx].mean(axis=0)
-                        data_pressure = ds['air_pressure_at_sea_level'][:, lt_idx].mean(axis=0) if pressure_contour else None
+                        data = ds[field][:, lt].mean(axis=0)
+                        data_pressure = ds['air_pressure_at_sea_level'][:, lt].mean(axis=0) if pressure_contour else None
                         label_x = "ensemble mean" if i==0 else None
                         label_y = "ensemble mean" if j==0 else None
                         im = self._plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
@@ -504,8 +512,8 @@ class FieldPlotter:
                 if include_ref:
                     i_ref, j_ref = ref_dim
                     if (i_ref is None or i==i_ref) and (j_ref is None or j==j_ref):
-                        data = data_ref[field][lt_idx]
-                        data_pressure = data_ref['air_pressure_at_sea_level'][lt_idx] if pressure_contour else None
+                        data = data_ref[field][lt]
+                        data_pressure = data_ref['air_pressure_at_sea_level'][lt] if pressure_contour else None
                         label_x = ref_label if i == 0 else None
                         label_y = ref_label if j == 0 else None
                         im = self._plot_panel(axs[i,j], data, lat_grid_ref, lon_grid_ref, data_pressure, ds_ref.latitudes, ds_ref.longitudes, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
@@ -525,8 +533,8 @@ class FieldPlotter:
                 lon_grid = features['lon_grid']
                 lat_grid = features['lat_grid']
 
-                data = ds[field][ens_idx, lt_idx]
-                data_pressure = ds['air_pressure_at_sea_level'][ens_idx, lt_idx] if pressure_contour else None
+                data = ds[field][ens, lt]
+                data_pressure = ds['air_pressure_at_sea_level'][ens, lt] if pressure_contour else None
                 im = self._plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
         fig = self._process_fig(fig, axs, im, field, self.time, units, path_out, show)
         return fig, axs
@@ -553,7 +561,7 @@ if __name__ == "__main__":
         ],
         #model_labels = ['CRPS+KL\n'+r'$\lambda=10^{-4}$', 'CRPS+KL\n'+r'$\lambda=10^{-2}$', 'CRPS+KL\n'+r'$\lambda=1$'],
         #model_labels = ['CRPS', 'CRPS+CRPS(filter)'],
-        model_labels = ['5e-7', '1e-6'],
+        model_label = ['5e-7', '1e-6'],
         members=0,
         #file_prefix="240hfc",
         #latlon_units='rad',
@@ -563,7 +571,7 @@ if __name__ == "__main__":
     fp.plot(
         field='precipitation_amount_acc6h', 
         lead_times=[0,4,8,12], #,16,20,24,28,32,36,40], 
-        pressure_contour=True,
+        pressure_contour=False,
         cmap=cmap, 
         norm=True,
         file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr", 
