@@ -29,7 +29,7 @@ fp.plot('air_temperature_2m', lead_times=4)
 `time` is not strictly needed here, but is necessary if we want to compare to some reference (here MEPS):
 
 ```python
-fp.plot('air_temperature_2m', lead_times=4, file_ref="meps.zarr")
+fp.plot('air_temperature_2m', lead_times=4, file_ref="meps.zarr", ref_label="MEPS")
 ```
 
 ![figs/field_plotter/ex_reference.png](figs/field_plotter/ex_reference.png)
@@ -48,7 +48,7 @@ One can plot the loss directly from the output file using the Python interface o
 loss-plotter output1.out output2.out
 ```
 
-![figs/loss_plotter/loss.png](figs/loss_plotter/loss.png "Loss figure")
+![figs/loss_plotter/basic.png](figs/loss_plotter/basic.png "Loss figure")
 
 ## Install
 To install the package, run
