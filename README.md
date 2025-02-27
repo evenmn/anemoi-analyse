@@ -45,10 +45,10 @@ Of course, the `file_ref` and `lead_times` arguments can be combined for compari
 ### `LossPlotter`
 One can plot the loss directly from the output file using the Python interface or the command-line interface `loss-plotter`: 
 ```bash
-loss-plotter output1.out output2.out
+loss-plotter output1.out output2.out output3.out
 ```
 
-![figs/loss_plotter/basic.png](figs/loss_plotter/basic.png "Loss figure")
+![figs/loss_plotter/basic.png](figs/loss_plotter/loss_outputs.png "Loss figure")
 
 ## Install
 To install the package, run
