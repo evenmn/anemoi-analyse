@@ -1,4 +1,12 @@
 
+class CustomTransformer:
+    def __init__(self, era5_label):
+        self.era5_label = era5_label
+
+    def __call__(self, ds, slc):
+        idx = ds.variables.index(self.era5_label)
+        return ds[slc][:, idx, 0]
+
 def kelvin2celsius(ds, slc):
     """Convert Kelvin to Celsius."""
     t_idx = ds.variables.index('2t')
@@ -61,4 +69,39 @@ map_keys = {
         'thresholds': [970, 980, 990, 1000, 1010, 1020, 1030],
         'long_name': 'Mean sea level pressure',
     },
+    'cloud_area_fraction_0m': {
+        'standard': 'tcc',
+        'era5': ['tcc'],
+        'frost': None,
+        'units': '%',
+        'transform': CustomTransformer('tcc'),
+        'long_name': 'Total cloud coverage',
+    },
+    'low_type_cloud_area_fraction_0m': {
+        'standard': 'lcc',
+        'era5': ['lcc'],
+        'frost': None,
+        'units': '%',
+        'transform': CustomTransformer('lcc'),
+        'long_name': 'Low cloud coverage',
+    },
+    'medium_type_cloud_area_fraction_0m': {
+        'standard': 'mcc',
+        'era5': ['mcc'],
+        'frost': None,
+        'units': '%',
+        'transform': CustomTransformer('mcc'),
+        'long_name': 'Medium cloud coverage',
+    },
+    'high_type_cloud_area_fraction_0m': {
+        'standard': 'hcc',
+        'era5': ['hcc'],
+        'frost': None,
+        'units': '%',
+        'transform': CustomTransformer('hcc'),
+        'long_name': 'High cloud coverage',
+    },
 }
+
+map_keys['precipitation_amount'] = map_keys['precipitation_amount_acc6h']
+map_keys['precipitation_amount']['transform'] = CustomTransformer('tp')

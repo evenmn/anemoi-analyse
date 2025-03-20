@@ -113,8 +113,8 @@ class FieldPlotter:
                         (ds.longitude <= ylim[1]),
                         drop=True
                     )
-                lon = np.array(ds.latitude)
-                lat = np.array(ds.longitude)
+                lat = np.array(ds.latitude)
+                lon = np.array(ds.longitude)
                 if rad:
                     lon = np.rad2deg(lon)
                     lat = np.rad2deg(lat)
@@ -252,7 +252,6 @@ class FieldPlotter:
             # if only one panel, we want it to be labeled by model
             var_idx_xy = [1,2]  # use model and lead times #var_idx[::-1][-2:]
         else:
-
             var_idx_xy = var_idx[-2:]  # dimension indices longer than 1 element
         var_len_xy = var_len[var_idx_xy]  # number of panels in each direction
         panel_shape = var_len_xy
@@ -384,6 +383,7 @@ class FieldPlotter:
             ref_label: str = 'ref',
             ref_units: str = 'deg',
             cmap: str = 'turbo',
+            clip_color: float = None,
             **kwargs,
         ) -> (matplotlib.figure, np.ndarray[matplotlib.axes.Axes]):
         """
@@ -415,6 +415,10 @@ class FieldPlotter:
                 Reference label to be printed as panel title
             ref_units: str
                 Angle units of reference, 'deg' (degrees) or 'rad' (radians)
+            cmap: str
+                To be used by matplotlib.colormaps
+            clip_color: float
+                Clip color bar range by this percentage
         """
         lead_times = np.atleast_1d(lead_times)
         self.field = field
@@ -440,10 +444,14 @@ class FieldPlotter:
             ds = features['ds']
             vmin = min(vmin, float(ds[field][:,lead_times].min()))
             vmax = max(vmax, float(ds[field][:,lead_times].max()))
-            cen = (vmax-vmin)/10. # let color range cover between 10 and 90 percentils
+
+        # clip color range
+        if isinstance(clip_color, float | int):
+            cen = (vmax-vmin) / clip_color
             vmin += cen
             vmax -= cen
 
+        """
         if norm:
             boundaries = np.logspace(0.001, np.log10(vmax), cmap.N-1)
             boundaries = [0.0, 0.5, 1, 2, 4, 8, 16, 32]
@@ -452,6 +460,9 @@ class FieldPlotter:
         else:
             kwargs['vmin'] = vmin
             kwargs['vmax'] = vmax
+        """
+        kwargs['vmin'] = vmin
+        kwargs['vmax'] = vmax
         kwargs['shading'] = 'auto'
 
         # define fig and axes
@@ -463,8 +474,8 @@ class FieldPlotter:
         else:
             projection = ccrs.PlateCarree()
         panel_shape, var_idx_xy, var_len_xy, ens_mean, ref_dim = self.panel_daemon(len(self.paths), len(self.lead_times), self.ens_size, plot_ens_mean, include_ref, swap_axes)
-        fig, axs = plt.subplots(*panel_shape, figsize=(8,6), squeeze=False, subplot_kw={'projection': projection})
-            
+        fig, axs = plt.subplots(*panel_shape, squeeze=False, subplot_kw={'projection': projection})
+
         def model_label(i):
             if self.model_label is None:
                 return f'model {i}'
@@ -473,7 +484,7 @@ class FieldPlotter:
             return self.model_label[i]
 
         def lt_label(i):
-            lead_time = 6 * lead_times[i]
+            lead_time = int(self.freq[:-1]) * lead_times[i]
             return f'+{lead_time}h'
 
         def member_label(i):
@@ -498,7 +509,6 @@ class FieldPlotter:
                     idx[var_idx_xy[1]] = j
                 ens_idx, lt_idx, model_idx = idx
                 lt = self.lead_times[lt_idx]
-                ens = self.members[ens_idx]
                 if plot_ens_mean:
                     only_em, i_em, j_em = ens_mean
                     if (i_em is None or i==i_em) and (j_em is None or j==j_em):
@@ -533,54 +543,14 @@ class FieldPlotter:
                 lon_grid = features['lon_grid']
                 lat_grid = features['lat_grid']
 
-                data = ds[field][ens, lt]
+                ens = self.members[ens_idx]
+                data = ds[field][ens, lt][0]
                 data_pressure = ds['air_pressure_at_sea_level'][ens, lt] if pressure_contour else None
                 im = self._plot_panel(axs[i,j], data, lat_grid, lon_grid, data_pressure, lat, lon, xlim, ylim, titlex=label_x, titley=label_y, resolution=resolution, **kwargs)
         fig = self._process_fig(fig, axs, im, field, self.time, units, path_out, show)
         return fig, axs
 
-
-if __name__ == "__main__":
-
-    import matplotlib
-
-    cmap = matplotlib.colors.LinearSegmentedColormap.from_list("my_cmap", ["white", "white", "#3c78d8", "#00ffff", "#008800", "#ffff00", "red"])
-
-    fp = FieldPlotter(
-        #time="2022-06-29T00", 
-        time="2023-08-15T00", 
-        path=[
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c/inference/epoch_077_10mem_1year/predictions/", 
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_kl/inference/epoch_076/predictions/", 
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_kl_w1e-2/inference/epoch_076/predictions/", 
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_kl_w1/inference/epoch_076/predictions/", 
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_c_safcrps_k5_s1/inference/epoch_076/predictions/", 
-            #"/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_b_s0.1_mp/inference/epoch_030/predictions/",
-            "/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_d_roll2_lr5e-7/inference/epoch_009/predictions/",
-            "/pfs/lustrep3/scratch/project_465000454/anemoi/experiments/ni3_d_roll2_lr1e-6/inference/epoch_009/predictions/",
-        ],
-        #model_labels = ['CRPS+KL\n'+r'$\lambda=10^{-4}$', 'CRPS+KL\n'+r'$\lambda=10^{-2}$', 'CRPS+KL\n'+r'$\lambda=1$'],
-        #model_labels = ['CRPS', 'CRPS+CRPS(filter)'],
-        model_label = ['5e-7', '1e-6'],
-        members=0,
-        #file_prefix="240hfc",
-        #latlon_units='rad',
-        #resolution=0.25,
-    )
-
-    fp.plot(
-        field='precipitation_amount_acc6h', 
-        lead_times=[0,4,8,12], #,16,20,24,28,32,36,40], 
-        pressure_contour=False,
-        cmap=cmap, 
-        norm=True,
-        file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr", 
-        #file_ref="/pfs/lustrep3/scratch/project_465000454/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr", 
-        #xlim=(-4e5,0),
-        #ylim=(-6e5,0),
-        #xlim=(100,180),
-        #ylim=(-11, 40),
-        plot_ens_mean=False,
-        swap_axes=False,
-        ref_label='MEPS',
-    )
+    def list_variables(self):
+        """List available variables."""
+        all_vars = [set(path_feature['ds'].variables) for path_feature in self.path_features]
+        print(set.intersection(*all_vars))
