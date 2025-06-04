@@ -584,3 +584,22 @@ if __name__ == "__main__":
         swap_axes=False,
         ref_label='MEPS',
     )
+
+    # plan:
+    # - rename FieldPlotter -> Reader or something. Responsible of reading output NetCDF files
+    # - fp.plot -> fp.quickplot
+    # - make this into a spatial verification package
+    #    -> do sharpness analysis, as a function of leadtime, for various models and members
+    #    -> difference map between models (error maps)
+    #    -> ensemble spread maps
+    #    -> energy spectra (fft)
+    #    -> wavelets
+    #
+    # interface should be similar to the verif package
+    # verifs model1.nc model2.nc -f air_temperature_2m
+    # verifs model1.nc model2.nc -f air_temperature_2m -m quickplot
+    # -m: field, sharpness, fft (deterministic)
+    # -m: mae, mse, rmse (deterministic, two fields only)
+    # -m: spread, crps (probabilistic, ensembles vs target)
+    # -l: lead times
+    # -e: ensemble members
